@@ -24,10 +24,15 @@ consoleHandler = logging.StreamHandler(sys.stdout)
 consoleHandler.setFormatter(formatter)
 logger.addHandler(consoleHandler)
 fileHandler = RotatingFileHandler('/app/logs/abacus.log', maxBytes=1024 * 1024 * 1, backupCount=1)
-logger.setLevel(os.environ['LOG_LEVEL'])
+logger.setLevel(os.environ['LOG_LEVEL'].upper())
 logging.getLogger("requests").setLevel(logging.WARNING)
 fileHandler.setFormatter(formatter)
 logger.addHandler(fileHandler)
+
+
+def send_message(text):
+	result = sc.api_call("chat.postMessage", channel=os.environ['SLACK_CHANNEL'], text=text)
+	return result
 
 
 class Abacus(object):
@@ -47,11 +52,11 @@ class Abacus(object):
 
 		chrome_path = os.path.join(os.getcwd(), "chrome")
 		option.add_argument("--user-data-dir="+chrome_path)
-		option.add_experimental_option("detach", True)
 		s = Service(ChromeDriverManager().install())
 		driver = webdriver.Chrome(service=s, options=option)
 		driver.maximize_window()
 		self.browser = driver
+		logger.info("Chrome Successfully Started")
 
 	def login(self):
 		if self.browser is None:
@@ -72,7 +77,7 @@ class Abacus(object):
 			self.browser.find_element(By.XPATH, '//*[@id="ctl00_DefaultContent_AuthCodeSMSSelect"]').click()
 			self.browser.find_element(By.XPATH, '//*[@id="ctl00_DefaultContent_GetAuthCodeButton"]').click()
 			logger.info("2FA Sent")
-			result = sc.api_call("chat.postMessage", channel=os.environ['SLACK_CHANNEL'], text="New Abacus Request")
+			result = send_message("New Abacus Request")
 			last_result = None
 
 			while True:
@@ -137,8 +142,10 @@ class Abacus(object):
 			new_status = self.status
 			if current_status != new_status:
 				logger.info("Punch Submitted")
+				send_message("Abacus Successfully Punched. Status is now %s" % self.status)
 			else:
 				logger.error("Status Not Changed")
+				send_message("Abacus Punch Failed. Verify Punch")
 		except Exception as e:
 			if self.browser is None:
 				logger.error("Failed Submitting Punch, Try Logging In")
