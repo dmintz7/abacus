@@ -1,0 +1,17 @@
+version: '2'
+services:
+  abacus:
+    container_name: abacus
+    image: dmintz7/abacus
+    build: .
+    environment:
+      - LOG_LEVEL=INFO
+      - TIME_ZONE=America/New_York
+      - USERNAME=
+      - PASSWORD=
+      - SLACK_TOKEN=
+      - SLACK_CHANNEL=
+    volumes:
+      - PATH/TO/CHROME/DATA:/app/chrome
+      - PATH/TO/LOGS:/app/logs
+    restart: unless-stopped
