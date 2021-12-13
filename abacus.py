@@ -5,7 +5,7 @@ import time
 import logging
 from logging.handlers import RotatingFileHandler
 
-from selenium.common.exceptions import NoSuchElementException
+from selenium.common.exceptions import NoSuchElementException, WebDriverException
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
@@ -43,7 +43,6 @@ class Abacus(object):
 
 	def start_browser(self):
 		option = webdriver.ChromeOptions()
-		option.add_argument('headless')
 		try:
 			if os.environ['DOCKER']:
 				option.add_argument('--no-sandbox')
@@ -52,6 +51,15 @@ class Abacus(object):
 
 		chrome_path = os.path.join(os.getcwd(), "chrome")
 		option.add_argument("--user-data-dir="+chrome_path)
+
+		option.add_argument("enable-automation");
+		option.add_argument("--headless");
+		# option.add_argument("--window-size=1920,1080");
+		# option.add_argument("--disable-extensions");
+		# option.add_argument("--dns-prefetch-disable");
+		# option.add_argument("--disable-gpu");
+		# option.setPageLoadStrategy(PageLoadStrategy.NORMAL);
+		
 		s = Service(ChromeDriverManager().install())
 		driver = webdriver.Chrome(service=s, options=option)
 		driver.maximize_window()
@@ -97,6 +105,9 @@ class Abacus(object):
 			self.browser.find_element(By.ID, 'ctl00_DefaultContent_AuthCodeTextBox').send_keys(last_result[-1]['text'], Keys.RETURN)
 		except NoSuchElementException:
 			pass
+		except WebDriverException:
+			self.browser = None
+			self.login()
 		except Exception as e:
 			logger.error('Error on line {} {} {}'.format(sys.exc_info()[-1].tb_lineno, type(e).__name__, e))
 
@@ -137,15 +148,19 @@ class Abacus(object):
 		try:
 			current_status = self.status
 			logger.debug("Submitting Quick Punch")
-			self.browser.find_element(By.XPATH, '//*[@id="SelfServiceMenu_QuickPunch"]').click()
-			self.update_status()
-			new_status = self.status
-			if current_status != new_status:
-				logger.info("Punch Submitted")
-				send_message("Abacus Successfully Punched. Status is now %s" % self.status)
+			
+			for attempt in range(5):
+				self.browser.find_element(By.XPATH, '//*[@id="SelfServiceMenu_QuickPunch"]').click()
+				self.update_status()
+				new_status = self.status
+				if current_status != new_status:
+					logger.info("Punch Submitted After %s attempts" % attempt)
+					send_message("Abacus Successfully Punched. Status is now %s" % self.status)
+					break
 			else:
-				logger.error("Status Not Changed")
+				logger.error("Status Not Changed, Trying Again")
 				send_message("Abacus Punch Failed. Verify Punch")
+				
 		except Exception as e:
 			if self.browser is None:
 				logger.error("Failed Submitting Punch, Try Logging In")
