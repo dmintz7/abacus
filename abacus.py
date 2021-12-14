@@ -1,7 +1,8 @@
 import os
 import sys
-import optparse
 import time
+import optparse
+import flask
 import logging
 from logging.handlers import RotatingFileHandler
 
@@ -17,13 +18,16 @@ from slackclient import SlackClient
 
 sc = SlackClient(os.environ['SLACK_TOKEN'])
 
+app = flask.Flask(__name__)
+
 formatter = logging.Formatter('%(asctime)s - %(levelname)10s - %(module)15s:%(funcName)30s:%(lineno)5s - %(message)s')
 logger = logging.getLogger()
 logger.setLevel(logging.DEBUG)
 consoleHandler = logging.StreamHandler(sys.stdout)
 consoleHandler.setFormatter(formatter)
 logger.addHandler(consoleHandler)
-fileHandler = RotatingFileHandler('/app/logs/abacus.log', maxBytes=1024 * 1024 * 1, backupCount=1)
+fileHandler = RotatingFileHandler('X:\\Scripts\\Logs\\abacus.log', maxBytes=1024 * 1024 * 1, backupCount=1)
+# fileHandler = RotatingFileHandler('/app/logs/abacus.log', maxBytes=1024 * 1024 * 1, backupCount=1)
 logger.setLevel(os.environ['LOG_LEVEL'].upper())
 logging.getLogger("requests").setLevel(logging.WARNING)
 fileHandler.setFormatter(formatter)
@@ -52,8 +56,8 @@ class Abacus(object):
 		chrome_path = os.path.join(os.getcwd(), "chrome")
 		option.add_argument("--user-data-dir="+chrome_path)
 
-		option.add_argument("enable-automation");
-		option.add_argument("--headless");
+		option.add_argument("enable-automation")
+		# option.add_argument("--headless")
 		# option.add_argument("--window-size=1920,1080");
 		# option.add_argument("--disable-extensions");
 		# option.add_argument("--dns-prefetch-disable");
@@ -176,12 +180,27 @@ class Abacus(object):
 			logger.info("Status Already Set to %s" % self.status.upper())
 
 
+@app.route('/')
+def index():
+	try:
+		status_code = flask.Response(status=201)
+		return status_code
+	except KeyError:
+		flask.abort(404)
+
+
 if __name__ == "__main__":
 	parser = optparse.OptionParser()
+	parser.add_option('-i', '--initialize', action="store_const", const=True, dest="initialize")
 	parser.add_option('-s', '--set', action="store_const", const=True, dest="set_status")
 	options, args = parser.parse_args()
 
-	aba = Abacus()
-	aba.login()
 	if options.set_status:
+		aba = Abacus()
+		aba.login()
 		aba.set_status(args[0])
+		aba.browser.close()
+		aba = None
+	# if options.initialize:
+	# 	logger.info("Starting Server")
+	# 	app.run(host='0.0.0.0', port=8800)
