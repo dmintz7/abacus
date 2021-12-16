@@ -1,24 +1,19 @@
+import logging
+import optparse
 import os
 import sys
 import time
-import optparse
-import flask
-import logging
 from logging.handlers import RotatingFileHandler
 
+from selenium import webdriver
 from selenium.common.exceptions import NoSuchElementException, WebDriverException
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
+from slackclient import SlackClient
 from webdriver_manager.chrome import ChromeDriverManager
 
-from selenium import webdriver
-
-from slackclient import SlackClient
-
 sc = SlackClient(os.environ['SLACK_TOKEN'])
-
-app = flask.Flask(__name__)
 
 formatter = logging.Formatter('%(asctime)s - %(levelname)10s - %(module)15s:%(funcName)30s:%(lineno)5s - %(message)s')
 logger = logging.getLogger()
@@ -26,8 +21,7 @@ logger.setLevel(logging.DEBUG)
 consoleHandler = logging.StreamHandler(sys.stdout)
 consoleHandler.setFormatter(formatter)
 logger.addHandler(consoleHandler)
-fileHandler = RotatingFileHandler('X:\\Scripts\\Logs\\abacus.log', maxBytes=1024 * 1024 * 1, backupCount=1)
-# fileHandler = RotatingFileHandler('/app/logs/abacus.log', maxBytes=1024 * 1024 * 1, backupCount=1)
+fileHandler = RotatingFileHandler('/app/logs/abacus.log', maxBytes=1024 * 1024 * 1, backupCount=1)
 logger.setLevel(os.environ['LOG_LEVEL'].upper())
 logging.getLogger("requests").setLevel(logging.WARNING)
 fileHandler.setFormatter(formatter)
@@ -46,36 +40,28 @@ class Abacus(object):
 		self.browser = None
 
 	def start_browser(self):
-		option = webdriver.ChromeOptions()
 		try:
-			if os.environ['DOCKER']:
-				option.add_argument('--no-sandbox')
-		except KeyError:
-			pass
+			option = webdriver.ChromeOptions()
+			option.add_argument('--no-sandbox')
+			option.add_argument("--user-data-dir=/app/chrome")
+			option.add_argument("enable-automation")
+			option.add_argument("--headless")
 
-		chrome_path = os.path.join(os.getcwd(), "chrome")
-		option.add_argument("--user-data-dir="+chrome_path)
-
-		option.add_argument("enable-automation")
-		# option.add_argument("--headless")
-		# option.add_argument("--window-size=1920,1080");
-		# option.add_argument("--disable-extensions");
-		# option.add_argument("--dns-prefetch-disable");
-		# option.add_argument("--disable-gpu");
-		# option.setPageLoadStrategy(PageLoadStrategy.NORMAL);
-		
-		s = Service(ChromeDriverManager().install())
-		driver = webdriver.Chrome(service=s, options=option)
-		driver.maximize_window()
-		self.browser = driver
-		logger.info("Chrome Successfully Started")
+			s = Service(ChromeDriverManager().install())
+			driver = webdriver.Chrome(service=s, options=option)
+			driver.maximize_window()
+			driver.implicitly_wait(30)
+			self.browser = driver
+			logger.info("Chrome Successfully Started")
+		except Exception as e:
+			logger.error('Error on line {} {} {}'.format(sys.exc_info()[-1].tb_lineno, type(e).__name__, e))
+			self.start_browser()
 
 	def login(self):
 		if self.browser is None:
 			self.start_browser()
+
 		self.browser.get("https://abacus.myisolved.com/UserLogin.aspx")
-		self.browser.maximize_window()
-		self.browser.implicitly_wait(30)
 
 		try:
 			logger.debug("Entering Username")
@@ -99,14 +85,18 @@ class Abacus(object):
 					last_result = \
 						sc.api_call("conversations.replies", ts=result['ts'], channel=os.environ['SLACK_CHANNEL'])[
 							'messages']
+					logger.info(last_result)
 					reply_count = last_result[0]['reply_count']
 					logger.info("2FA Code Received")
 				except KeyError:
 					reply_count = 0
+				except Exception as e:
+					logger.error('Error on line {} {} {}'.format(sys.exc_info()[-1].tb_lineno, type(e).__name__, e))
+					break
 				if reply_count != 0:
 					break
 
-			self.browser.find_element(By.ID, 'ctl00_DefaultContent_AuthCodeTextBox').send_keys(last_result[-1]['text'], Keys.RETURN)
+			self.browser.find_element(By.ID, 'ctl00_DefaultContent_AuthCodeTextBox').send_keys(last_result[-1]['text'].split("|")[1][:-1], Keys.RETURN)
 		except NoSuchElementException:
 			pass
 		except WebDriverException:
@@ -123,7 +113,7 @@ class Abacus(object):
 				self.update_status()
 		except Exception as e:
 			logger.error('Error on line {} {} {}'.format(sys.exc_info()[-1].tb_lineno, type(e).__name__, e))
-			logger.error(self.status)
+			logger.error(self.browser.current_url)
 
 	def update_status(self):
 		try:
@@ -132,7 +122,9 @@ class Abacus(object):
 			self.browser.find_element(By.XPATH, '//*[@id="SelfServicePunchDropDown"]').click()
 			while current_status is None:
 				try:
-					current_status = self.browser.find_element(By.XPATH, '//*[@id="SelfServicePunchDropDown"]/ul/li[8]').text.split(":")[1].strip().upper()
+					current_status = \
+						self.browser.find_element(By.XPATH, '//*[@id="SelfServicePunchDropDown"]/ul/li[8]').text.split(":")[
+							1].strip().upper()
 				except IndexError:
 					self.browser.find_element(By.XPATH, '//*[@id="SelfServicePunchDropDown"]').click()
 					current_status = None
@@ -152,19 +144,19 @@ class Abacus(object):
 		try:
 			current_status = self.status
 			logger.debug("Submitting Quick Punch")
-			
+
 			for attempt in range(5):
 				self.browser.find_element(By.XPATH, '//*[@id="SelfServiceMenu_QuickPunch"]').click()
 				self.update_status()
 				new_status = self.status
-				if current_status != new_status:
+				if current_status != new_status and (new_status == 'IN' or new_status == 'OUT'):
 					logger.info("Punch Submitted After %s attempts" % attempt)
-					send_message("Abacus Successfully Punched. Status is now %s" % self.status)
+					send_message("Abacus Successfully Punched. Status is now %s" % new_status)
 					break
 			else:
 				logger.error("Status Not Changed, Trying Again")
 				send_message("Abacus Punch Failed. Verify Punch")
-				
+
 		except Exception as e:
 			if self.browser is None:
 				logger.error("Failed Submitting Punch, Try Logging In")
@@ -180,18 +172,9 @@ class Abacus(object):
 			logger.info("Status Already Set to %s" % self.status.upper())
 
 
-@app.route('/')
-def index():
-	try:
-		status_code = flask.Response(status=201)
-		return status_code
-	except KeyError:
-		flask.abort(404)
-
-
 if __name__ == "__main__":
 	parser = optparse.OptionParser()
-	parser.add_option('-i', '--initialize', action="store_const", const=True, dest="initialize")
+	parser.add_option('-l', '--login', action="store_const", const=True, dest="login")
 	parser.add_option('-s', '--set', action="store_const", const=True, dest="set_status")
 	options, args = parser.parse_args()
 
@@ -201,6 +184,7 @@ if __name__ == "__main__":
 		aba.set_status(args[0])
 		aba.browser.close()
 		aba = None
-	# if options.initialize:
-	# 	logger.info("Starting Server")
-	# 	app.run(host='0.0.0.0', port=8800)
+	if options.login:
+		aba = Abacus()
+		aba.login()
+		aba.browser.close()
