@@ -50,7 +50,7 @@ class Abacus(object):
 			s = Service(ChromeDriverManager().install())
 			driver = webdriver.Chrome(service=s, options=option)
 			driver.maximize_window()
-			driver.implicitly_wait(30)
+			driver.implicitly_wait(10)
 			self.browser = driver
 			logger.info("Chrome Successfully Started")
 		except Exception as e:
@@ -78,7 +78,7 @@ class Abacus(object):
 			result = send_message("New Abacus Request")
 			last_result = None
 
-			while True:
+			for attempt in range(20):
 				try:
 					logger.info("Waiting for 2FA Response...")
 					time.sleep(5)
@@ -95,8 +95,19 @@ class Abacus(object):
 					break
 				if reply_count != 0:
 					break
+			else:
+				logger.error("2FA Failed")
+				exit()
 
-			self.browser.find_element(By.ID, 'ctl00_DefaultContent_AuthCodeTextBox').send_keys(last_result[-1]['text'].split("|")[1][:-1], Keys.RETURN)
+			try:
+				receive_code = last_result[-1]['text'].split("|")[1][:-1]
+			except IndexError:
+				receive_code = last_result[-1]['text']
+			except Exception as e:
+				logger.error('Error on line {} {} {}'.format(sys.exc_info()[-1].tb_lineno, type(e).__name__, e))
+				receive_code = 0
+
+			self.browser.find_element(By.ID, 'ctl00_DefaultContent_AuthCodeTextBox').send_keys(receive_code, Keys.RETURN)
 		except NoSuchElementException:
 			pass
 		except WebDriverException:
@@ -121,6 +132,7 @@ class Abacus(object):
 			current_status = None
 			self.browser.find_element(By.XPATH, '//*[@id="SelfServicePunchDropDown"]').click()
 			while current_status is None:
+				time.sleep(5)
 				try:
 					current_status = \
 						self.browser.find_element(By.XPATH, '//*[@id="SelfServicePunchDropDown"]/ul/li[8]').text.split(":")[
@@ -149,8 +161,10 @@ class Abacus(object):
 				self.browser.find_element(By.XPATH, '//*[@id="SelfServiceMenu_QuickPunch"]').click()
 				self.update_status()
 				new_status = self.status
+				logger.debug((current_status, new_status))
+				logger.debug(((current_status != new_status), (new_status == 'IN' or new_status == 'OUT')))
 				if current_status != new_status and (new_status == 'IN' or new_status == 'OUT'):
-					logger.info("Punch Submitted After %s attempts" % attempt)
+					logger.info("Punch Submitted After %s attempts" % int(attempt)+1)
 					send_message("Abacus Successfully Punched. Status is now %s" % new_status)
 					break
 			else:
@@ -167,6 +181,7 @@ class Abacus(object):
 		aba.update_status()
 		if self.status.upper() != status.upper():
 			logger.debug("Applying Quick Punch")
+			logger.debug(status)
 			self.quick_punch()
 		else:
 			logger.info("Status Already Set to %s" % self.status.upper())
